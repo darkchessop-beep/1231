@@ -244,8 +244,21 @@
     <div id="mpStatus">🔴 Offline</div>
     <div id="mpPlayers">Connecting...</div>
     <input type="text" id="mpNameInput" placeholder="Your name" maxlength="16">
+    <input type="password" id="mpAdminInput" placeholder="Admin password" maxlength="20" style="width:100%;background:#2a2418;border:1px solid #6b5a3a;color:#f0e6d2;padding:3px 6px;border-radius:3px;font-size:10px;margin-top:4px;font-family:'Courier New',monospace;">
   </div>
 
+  
+  <div id="mpAdminPanel" style="display:none;position:absolute;top:132px;left:220px;background:rgba(20,15,10,0.9);padding:8px;border:1px solid #d4af37;border-radius:6px;font-size:10px;z-index:11;max-width:180px;">
+    <div style="color:#d4af37;margin-bottom:4px;font-weight:bold;">ADMIN COMMANDS</div>
+    <button onclick="sendAdminCommand('teleportAll')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Teleport All to Island</button>
+    <button onclick="sendAdminCommand('anchorAll')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Drop All Anchors</button>
+    <button onclick="sendAdminCommand('raiseAll')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Raise All Anchors</button>
+    <button onclick="sendAdminCommand('healAll')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Heal All Ships</button>
+    <button onclick="sendAdminCommand('storm')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Storm</button>
+    <button onclick="sendAdminCommand('calm')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Calm Seas</button>
+    <button onclick="sendAdminCommand('day')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Set Daytime</button>
+    <button onclick="sendAdminCommand('night')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Set Nighttime</button>
+  </div>
   <div id="chatPanel">
     <div id="chatLog"></div>
     <input type="text" id="chatInput" placeholder="Press Enter to chat..." maxlength="100">
@@ -3825,31 +3838,26 @@ function playSinkSound() {
 
 
 /* =========================================================================
-   MULTIPLAYER NETWORKING — injected inside module scope
+   MULTIPLAYER NETWORKING — comprehensive sync + admin commands
    ========================================================================= */
-/**
- * Sails of Fortune — Multiplayer Client Networking
- * 
- * Connects to WebSocket server, syncs player positions, cannonballs, and combat.
- * This script is loaded AFTER the game code and hooks into the game state.
- */
+const MP_ADMIN_PASSWORD = 'pirate123';  // secret password to enable admin
 
-// === Multiplayer State ===
 const mp = {
   ws: null,
   myId: null,
   myName: 'Pirate' + Math.floor(Math.random() * 1000),
   connected: false,
-  players: new Map(),      // id → { name, ship, mesh, sailRaised, anchorDown }
+  players: new Map(),      // id → { name, ship, mesh, sailRaised, anchorDown, playerMesh, playerState }
   lastSendTime: 0,
   sendInterval: 50,        // send position every 50ms (20/sec)
+  lastPlayerSendTime: 0,
+  playerSendInterval: 100, // send player character position 10/sec
   serverUrl: null,
+  isAdmin: false,
 };
 
 // === Connect to server ===
 function connectToServer(url) {
-  // Auto-detect ws:// vs wss:// based on page protocol
-  // HTTPS pages require wss:// (secure WebSocket), HTTP pages use ws://
   if (!url) {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     url = `${protocol}//${window.location.host}`;
@@ -3869,35 +3877,24 @@ function connectToServer(url) {
     mp.connected = true;
     console.log('Connected to server');
     showToast('🟢 Connected to server');
-    // Send join message
     mp.ws.send(JSON.stringify({ type: 'join', name: mp.myName }));
     updateConnectionUI();
   };
 
   mp.ws.onmessage = (event) => {
     let msg;
-    try {
-      msg = JSON.parse(event.data);
-    } catch (e) {
-      return;
-    }
+    try { msg = JSON.parse(event.data); } catch (e) { return; }
     handleMessage(msg);
   };
 
   mp.ws.onclose = () => {
     mp.connected = false;
-    console.log('Disconnected from server');
-    showToast('🔴 Disconnected from server');
+    showToast('🔴 Disconnected — reconnecting...');
     updateConnectionUI();
-    // Try to reconnect after 3 seconds
-    setTimeout(() => {
-      if (!mp.connected) connectToServer(mp.serverUrl);
-    }, 3000);
+    setTimeout(() => { if (!mp.connected) connectToServer(mp.serverUrl); }, 3000);
   };
 
-  mp.ws.onerror = (err) => {
-    console.error('WebSocket error:', err);
-  };
+  mp.ws.onerror = (err) => { console.error('WebSocket error:', err); };
 }
 
 // === Handle incoming messages ===
@@ -3906,9 +3903,9 @@ function handleMessage(msg) {
     case 'welcome':
       mp.myId = msg.id;
       console.log(`My ID: ${mp.myId}`);
-      // Add existing players
       for (const p of msg.players) {
         addRemotePlayer(p.id, p.name, p.ship);
+        if (p.playerState) updateRemotePlayerState(p.id, p.playerState);
       }
       updatePlayerListUI();
       break;
@@ -3921,7 +3918,7 @@ function handleMessage(msg) {
 
     case 'playerLeft':
       removeRemotePlayer(msg.id);
-      showToast('A player left the game');
+      showToast('A player left');
       updatePlayerListUI();
       break;
 
@@ -3929,32 +3926,38 @@ function handleMessage(msg) {
       updateRemotePlayer(msg.id, msg.ship, msg.sailRaised, msg.anchorDown);
       break;
 
+    case 'playerState':
+      updateRemotePlayerState(msg.id, msg.playerState);
+      break;
+
+    case 'nameChange':
+      const p = mp.players.get(msg.id);
+      if (p) {
+        p.name = msg.name;
+        updatePlayerListUI();
+        if (p.nameTag) p.nameTag.textContent = msg.name;
+      }
+      break;
+
     case 'fire':
-      // Other player fired cannons — spawn their cannonballs in our world
       handleRemoteFire(msg.id, msg.cannonballs);
       break;
 
     case 'hit':
-      // Someone hit someone — apply damage if we're the target
       if (msg.targetId === mp.myId && state.combat) {
         damagePlayer(msg.damage);
-        // Find source player for feedback
         const source = mp.players.get(msg.id);
-        if (source) {
-          showToast(`💥 Hit by ${source.name}! -${msg.damage} HP`);
-        }
+        showToast(`💥 Hit by ${source ? source.name : 'enemy'}! -${msg.damage} HP`);
       }
       break;
 
     case 'sink':
       if (msg.targetId === mp.myId && state.combat) {
-        // We were sunk by another player
-        // damagePlayer already handles sinking
+        // Our ship was sunk by another player
       }
       break;
 
     case 'enemyUpdate':
-      // Host synced enemy position — update our enemy
       if (state.combat && state.combat.enemyShips.length > 0) {
         const enemy = state.combat.enemyShips[0];
         if (enemy && msg.enemy) {
@@ -3967,6 +3970,10 @@ function handleMessage(msg) {
       }
       break;
 
+    case 'adminCommand':
+      handleAdminCommand(msg.command, msg.targetId, msg.data);
+      break;
+
     case 'chat':
       showChatMessage(msg.name, msg.text);
       break;
@@ -3975,33 +3982,77 @@ function handleMessage(msg) {
 
 // === Remote player management ===
 function addRemotePlayer(id, name, ship) {
-  if (id === mp.myId) return;
-  if (mp.players.has(id)) return;
+  if (id === mp.myId || mp.players.has(id)) return;
 
-  // Clone the player's ship model for this remote player
-  let mesh = null;
+  // Clone ship model
+  let shipMesh = null;
   if (state.shipModel) {
-    mesh = state.shipModel.clone();
-    // Tint with a random color to distinguish
-    const colors = [0x4488ff, 0x88ff44, 0xff8844, 0xff44ff, 0x44ffff, 0xffff44];
-    const color = colors[parseInt(id.replace('p', '')) % colors.length];
-    mesh.traverse((child) => {
+    shipMesh = state.shipModel.clone();
+    const colors = [0x4488ff, 0x88ff44, 0xff8844, 0xff44ff, 0x44ffff, 0xffff44, 0xff4488, 0x88ff88];
+    const colorIdx = parseInt(id.replace('p', '')) % colors.length;
+    shipMesh.traverse((child) => {
       if (child.isMesh && child.material) {
         child.material = child.material.clone();
-        child.material.color.setHex(color);
+        child.material.color.setHex(colors[colorIdx]);
       }
     });
-    mesh.userData.baseScale = state.shipModel.scale.x;
-    state.scene.add(mesh);
+    shipMesh.userData.baseScale = state.shipModel.scale.x;
+    state.scene.add(shipMesh);
   }
 
-  mp.players.set(id, { name, ship, mesh, sailRaised: 0.5, anchorDown: false });
+  // Clone player character (pirate)
+  let playerMesh = null;
+  if (typeof createPirateCharacter === 'function') {
+    playerMesh = createPirateCharacter();
+    state.scene.add(playerMesh);
+  }
+
+  // Create name tag (text sprite above ship)
+  const nameTag = createNameTag(name);
+
+  mp.players.set(id, { name, ship, mesh: shipMesh, playerMesh, nameTag, sailRaised: 0.5, anchorDown: false, playerState: null });
+}
+
+function createNameTag(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(20,15,10,0.8)';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.font = 'bold 28px Georgia';
+  ctx.fillStyle = '#d4af37';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, 128, 42);
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(8, 2, 1);
+  state.scene.add(sprite);
+  return sprite;
+}
+
+function updateNameTagText(nameTag, text) {
+  if (!nameTag) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(20,15,10,0.8)';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.font = 'bold 28px Georgia';
+  ctx.fillStyle = '#d4af37';
+  ctx.textAlign = 'center';
+  ctx.fillText(text, 128, 42);
+  nameTag.material.map.dispose();
+  nameTag.material.map = new THREE.CanvasTexture(canvas);
+  nameTag.material.needsUpdate = true;
 }
 
 function removeRemotePlayer(id) {
   const player = mp.players.get(id);
-  if (player && player.mesh) {
-    state.scene.remove(player.mesh);
+  if (player) {
+    if (player.mesh) state.scene.remove(player.mesh);
+    if (player.playerMesh) state.scene.remove(player.playerMesh);
+    if (player.nameTag) { state.scene.remove(player.nameTag); player.nameTag.material.map.dispose(); }
   }
   mp.players.delete(id);
 }
@@ -4016,18 +4067,38 @@ function updateRemotePlayer(id, ship, sailRaised, anchorDown) {
 
   if (player.mesh) {
     player.mesh.position.set(ship.x, ship.y, ship.z);
-    player.mesh.rotation.set(ship.pitch || 0, ship.heading, ship.roll || 0, 'YXZ');
-    // Apply same scale as our ship
+    player.mesh.rotation.set(ship.pitch || 0, ship.heading + Math.PI, ship.roll || 0, 'YXZ');
     const baseScale = player.mesh.userData.baseScale || 1.0;
     player.mesh.scale.setScalar(baseScale * (state.admin.shipScale || 1.0));
-    player.mesh.rotation.y = ship.heading + Math.PI;  // match our 180° flip
+  }
+
+  // Update name tag position (above ship)
+  if (player.nameTag && ship) {
+    player.nameTag.position.set(ship.x, ship.y + 12, ship.z);
   }
 }
 
-// === Send our position to server ===
+function updateRemotePlayerState(id, playerState) {
+  const player = mp.players.get(id);
+  if (!player || !playerState) return;
+  player.playerState = playerState;
+
+  // Update player character mesh position + animation
+  if (player.playerMesh && playerState) {
+    player.playerMesh.position.set(playerState.x, playerState.y, playerState.z);
+    player.playerMesh.rotation.y = playerState.facing || 0;
+    player.playerMesh.visible = playerState.mode !== 'helm';
+
+    // Update name tag to follow player character when on foot
+    if (playerState.mode !== 'helm' && player.nameTag) {
+      player.nameTag.position.set(playerState.x, playerState.y + 3, playerState.z);
+    }
+  }
+}
+
+// === Send our position ===
 function sendPosition() {
   if (!mp.connected || !mp.ws || mp.ws.readyState !== 1) return;
-
   const now = performance.now();
   if (now - mp.lastSendTime < mp.sendInterval) return;
   mp.lastSendTime = now;
@@ -4035,23 +4106,29 @@ function sendPosition() {
   const s = state.shipState;
   mp.ws.send(JSON.stringify({
     type: 'position',
-    ship: {
-      x: s.position.x,
-      y: s.position.y,
-      z: s.position.z,
-      heading: s.heading,
-      pitch: s.pitch,
-      roll: s.roll,
-    },
+    ship: { x: s.position.x, y: s.position.y, z: s.position.z, heading: s.heading, pitch: s.pitch, roll: s.roll },
     sailRaised: s.sailRaised,
     anchorDown: s.anchorDown,
   }));
 }
 
-// === Send cannon fire to server ===
+// === Send player character state ===
+function sendPlayerState() {
+  if (!mp.connected || !mp.ws || mp.ws.readyState !== 1) return;
+  const now = performance.now();
+  if (now - mp.lastPlayerSendTime < mp.playerSendInterval) return;
+  mp.lastPlayerSendTime = now;
+
+  const p = state.player;
+  mp.ws.send(JSON.stringify({
+    type: 'playerState',
+    playerState: { x: p.position.x, y: p.position.y, z: p.position.z, facing: p.facing, mode: p.mode },
+  }));
+}
+
+// === Send cannon fire ===
 function sendFire(cannonballs) {
   if (!mp.connected || !mp.ws || mp.ws.readyState !== 1) return;
-  // Send cannonball data (position + velocity) so other clients can spawn them
   const ballData = cannonballs.map(b => ({
     x: b.position.x, y: b.position.y, z: b.position.z,
     vx: b.userData.velocity.x, vy: b.userData.velocity.y, vz: b.userData.velocity.z,
@@ -4060,10 +4137,9 @@ function sendFire(cannonballs) {
   mp.ws.send(JSON.stringify({ type: 'fire', cannonballs: ballData }));
 }
 
-// === Handle remote cannon fire ===
+// === Handle remote fire ===
 function handleRemoteFire(sourceId, cannonballs) {
   if (!state.combat) return;
-  // Spawn cannonballs from remote player
   for (const bd of cannonballs) {
     const ball = state.combat.cannonballPool.find(b => !b.userData.active);
     if (!ball) break;
@@ -4072,27 +4148,18 @@ function handleRemoteFire(sourceId, cannonballs) {
     ball.userData.active = true;
     ball.userData.age = 0;
     ball.userData.damage = bd.damage;
-    ball.userData.firedBy = sourceId;  // mark as fired by remote player
+    ball.userData.firedBy = sourceId;
     ball.userData.velocity.set(bd.vx, bd.vy, bd.vz);
     state.combat.cannonballs.push(ball);
   }
-  // Play cannon sound
-  playCannonSound();
+  if (typeof playCannonSound === 'function') playCannonSound();
 }
 
-// === Send hit event ===
-function sendHit(targetId, damage) {
-  if (!mp.connected || !mp.ws || mp.ws.readyState !== 1) return;
-  mp.ws.send(JSON.stringify({ type: 'hit', targetId, damage }));
-}
-
-// === Check if our cannonballs hit any remote player ===
+// === Check hits on remote players ===
 function checkRemotePlayerHits() {
-  if (!mp.connected || mp.players.size === 0) return;
+  if (!mp.connected || mp.players.size === 0 || !state.combat) return;
   for (const ball of state.combat.cannonballs) {
-    if (!ball.userData.active) continue;
-    if (ball.userData.firedBy !== 'player') continue;  // only our balls
-
+    if (!ball.userData.active || ball.userData.firedBy !== 'player') continue;
     for (const [id, player] of mp.players) {
       if (!player.ship) continue;
       const dx = ball.position.x - player.ship.x;
@@ -4101,11 +4168,10 @@ function checkRemotePlayerHits() {
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       const hitRadius = 4 * (state.admin.shipScale || 1.0);
       if (dist < hitRadius) {
-        // Hit! Send to server
-        sendHit(id, ball.userData.damage);
+        mp.ws.send(JSON.stringify({ type: 'hit', targetId: id, damage: ball.userData.damage }));
         ball.userData.active = false;
         ball.visible = false;
-        playHitSound();
+        if (typeof playHitSound === 'function') playHitSound();
         showToast(`💥 Hit ${player.name}!`);
         break;
       }
@@ -4115,24 +4181,16 @@ function checkRemotePlayerHits() {
 
 // === Host: send enemy updates ===
 function sendEnemyUpdate() {
-  if (!mp.connected || mp.myId !== 'p1') return;  // only host
+  if (!mp.connected || mp.myId !== 'p1') return;
   if (!state.combat || state.combat.enemyShips.length === 0) return;
   const now = performance.now();
-  if (now - (mp.lastEnemySend || 0) < 100) return;  // 10/sec
+  if (now - (mp.lastEnemySend || 0) < 100) return;
   mp.lastEnemySend = now;
-
   const enemy = state.combat.enemyShips[0];
   if (enemy) {
     mp.ws.send(JSON.stringify({
       type: 'enemyUpdate',
-      enemy: {
-        id: 0,
-        x: enemy.position.x,
-        z: enemy.position.z,
-        heading: enemy.heading,
-        hp: enemy.hp,
-        alive: enemy.alive,
-      },
+      enemy: { id: 0, x: enemy.position.x, z: enemy.position.z, heading: enemy.heading, hp: enemy.hp, alive: enemy.alive },
     }));
   }
 }
@@ -4151,13 +4209,81 @@ function showChatMessage(name, text) {
   entry.innerHTML = `<span class="chat-name">${name}:</span> ${text}`;
   chatLog.appendChild(entry);
   chatLog.scrollTop = chatLog.scrollHeight;
-  // Keep only last 20 messages
-  while (chatLog.children.length > 20) {
-    chatLog.removeChild(chatLog.firstChild);
+  while (chatLog.children.length > 20) chatLog.removeChild(chatLog.firstChild);
+}
+
+// === Admin system ===
+function checkAdminPassword(password) {
+  if (password === MP_ADMIN_PASSWORD) {
+    mp.isAdmin = true;
+    const panel = document.getElementById('adminPanel');
+    const toggle = document.getElementById('adminToggle');
+    if (panel) panel.classList.add('visible');
+    if (toggle) { toggle.style.display = 'block'; toggle.textContent = '✕ CLOSE'; }
+    const adminP = document.getElementById('mpAdminPanel'); if (adminP) adminP.style.display = 'block';
+    showToast('🔓 Admin mode enabled');
+    return true;
+  }
+  return false;
+}
+
+function sendAdminCommand(command, targetId, data) {
+  if (!mp.isAdmin || !mp.connected || !mp.ws || mp.ws.readyState !== 1) return;
+  mp.ws.send(JSON.stringify({ type: 'adminCommand', command, targetId, data }));
+  showToast(`Admin: ${command}`);
+}
+
+function handleAdminCommand(command, targetId, data) {
+  switch (command) {
+    case 'teleportAll':
+      state.shipState.position.set(0, 0, 80);
+      state.shipState.velocity.set(0, 0, 0);
+      showToast('Admin: All ships teleported');
+      break;
+    case 'teleportPlayer':
+      if (targetId === mp.myId) {
+        state.shipState.position.set(data.x, 0, data.z);
+        state.shipState.velocity.set(0, 0, 0);
+        showToast('You were teleported by admin');
+      }
+      break;
+    case 'anchorAll':
+      state.shipState.anchorDown = true;
+      showToast('Admin: All anchors dropped');
+      break;
+    case 'raiseAll':
+      state.shipState.anchorDown = false;
+      showToast('Admin: All anchors raised');
+      break;
+    case 'healAll':
+      if (state.combat) {
+        state.combat.playerHp = state.combat.playerMaxHp;
+        state.combat.playerAlive = true;
+        showToast('Admin: All ships healed');
+      }
+      break;
+    case 'storm':
+      state.admin.windStrength = 25;
+      state.admin.waveHeight = 3;
+      showToast('Admin: Storm activated');
+      break;
+    case 'calm':
+      state.admin.windStrength = 5;
+      state.admin.waveHeight = 0.5;
+      showToast('Admin: Calm seas');
+      break;
+    case 'day':
+      state.admin.timeOfDay = 0.25;
+      showToast('Admin: Set to daytime');
+      break;
+    case 'night':
+      state.admin.timeOfDay = 0.75;
+      showToast('Admin: Set to nighttime');
+      break;
   }
 }
 
-// === UI: Connection status + player list ===
+// === UI updates ===
 function updateConnectionUI() {
   const el = document.getElementById('mpStatus');
   if (el) {
@@ -4172,27 +4298,54 @@ function updatePlayerListUI() {
   let html = `<div style="color:#d4af37;margin-bottom:4px;">Players (${mp.players.size + 1})</div>`;
   html += `<div style="color:#8fbf8f;">★ ${mp.myName} (you)</div>`;
   for (const [id, p] of mp.players) {
-    html += `<div style="color:#f0e6d2;">• ${p.name}</div>`;
+    html += `<div style="color:#f0e6d2;cursor:pointer;" onclick="teleportToPlayer('${id}')">• ${p.name}</div>`;
   }
   el.innerHTML = html;
 }
 
-// === Initialize multiplayer (called after game loads) ===
+// === Admin UI: teleport to player, admin command buttons ===
+function teleportToPlayer(id) {
+  if (mp.isAdmin) {
+    const player = mp.players.get(id);
+    if (player && player.ship) {
+      sendAdminCommand('teleportPlayer', id, { x: player.ship.x + 10, z: player.ship.z + 10 });
+      state.shipState.position.set(player.ship.x + 10, 0, player.ship.z + 10);
+      showToast(`Teleporting near ${player.name}`);
+    }
+  }
+}
+
+// === Initialize multiplayer ===
 function initMultiplayer() {
-  // Auto-connect to the server that served this page
-  // Auto-detect ws:// vs wss:// based on page protocol
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}`;
   connectToServer(wsUrl);
 
-  // Set up name input
+  // Name input
   const nameInput = document.getElementById('mpNameInput');
   if (nameInput) {
     nameInput.value = mp.myName;
     nameInput.addEventListener('change', () => {
       mp.myName = nameInput.value || 'Pirate';
       if (mp.connected) {
-        mp.ws.send(JSON.stringify({ type: 'join', name: mp.myName }));
+        mp.ws.send(JSON.stringify({ type: 'nameChange', name: mp.myName }));
+      }
+      updatePlayerListUI();
+    });
+  }
+
+  // Secret admin password input (hidden — type password + press Enter in name field)
+  // Actually use a separate hidden field
+  const adminInput = document.getElementById('mpAdminInput');
+  if (adminInput) {
+    adminInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (checkAdminPassword(adminInput.value)) {
+          adminInput.value = '';
+          adminInput.placeholder = 'Admin enabled';
+        } else {
+          showToast('Wrong password');
+        }
       }
     });
   }
@@ -4207,29 +4360,51 @@ function initMultiplayer() {
       }
     });
   }
+
+  // Hide admin toggle by default (only show after password)
+  const toggle = document.getElementById('adminToggle');
+  if (toggle) toggle.style.display = 'none';
 }
 
-// === Hook into game loop (called from animate) ===
+// === Main multiplayer update loop ===
 function updateMultiplayer() {
   if (!mp.connected) return;
-
-  // Send our position
   sendPosition();
-
-  // Check if our cannonballs hit remote players
+  sendPlayerState();
   if (state.combat) {
     checkRemotePlayerHits();
     sendEnemyUpdate();
   }
+
+  // Update remote player animations
+  for (const [id, player] of mp.players) {
+    if (player.playerMesh && player.playerState) {
+      // Simple idle animation for remote players
+      if (player.playerMesh.userData.animState) {
+        player.playerMesh.userData.animState.idleBob += 0.02;
+        const torso = player.playerMesh.userData.torso;
+        if (torso) torso.position.y = 1.05 + Math.sin(player.playerMesh.userData.animState.idleBob) * 0.02;
+      }
+    }
+  }
 }
 
-// Auto-initialize when game is ready
-// Wait for the game's animate loop to start, then init multiplayer
+// Hook into fireCannons to send to server
+const originalFireCannons = fireCannons;
+fireCannons = function() {
+  originalFireCannons();
+  // After firing, send cannonball data to server
+  if (mp.connected && state.combat) {
+    const ourBalls = state.combat.cannonballs.filter(b => b.userData.active && b.userData.firedBy === 'player');
+    if (ourBalls.length > 0) sendFire(ourBalls);
+  }
+};
+
+// Auto-init when game loads
 const mpInitInterval = setInterval(() => {
   if (state.loaded) {
     clearInterval(mpInitInterval);
     initMultiplayer();
-    // Hook into the animate loop
     const originalAnimate = animate;
     animate = function() {
       originalAnimate();
@@ -4237,6 +4412,7 @@ const mpInitInterval = setInterval(() => {
     };
   }
 }, 500);
+
 
 </script>
 </body>
