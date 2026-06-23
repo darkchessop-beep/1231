@@ -250,14 +250,14 @@
   
   <div id="mpAdminPanel" style="display:none;position:absolute;top:132px;left:220px;background:rgba(20,15,10,0.9);padding:8px;border:1px solid #d4af37;border-radius:6px;font-size:10px;z-index:11;max-width:180px;">
     <div style="color:#d4af37;margin-bottom:4px;font-weight:bold;">ADMIN COMMANDS</div>
-    <button onclick="sendAdminCommand('teleportAll')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Teleport All to Island</button>
-    <button onclick="sendAdminCommand('anchorAll')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Drop All Anchors</button>
-    <button onclick="sendAdminCommand('raiseAll')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Raise All Anchors</button>
-    <button onclick="sendAdminCommand('healAll')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Heal All Ships</button>
-    <button onclick="sendAdminCommand('storm')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Storm</button>
-    <button onclick="sendAdminCommand('calm')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Calm Seas</button>
-    <button onclick="sendAdminCommand('day')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Set Daytime</button>
-    <button onclick="sendAdminCommand('night')" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Set Nighttime</button>
+    <button id="btnMpTeleportAll" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Teleport All to Island</button>
+    <button id="btnMpAnchorAll" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Drop All Anchors</button>
+    <button id="btnMpRaiseAll" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Raise All Anchors</button>
+    <button id="btnMpHealAll" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Heal All Ships</button>
+    <button id="btnMpStorm" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Storm</button>
+    <button id="btnMpCalm" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Calm Seas</button>
+    <button id="btnMpDay" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Set Daytime</button>
+    <button id="btnMpNight" style="display:block;width:100%;margin:2px 0;background:#2a2418;color:#d4af37;border:1px solid #6b5a3a;padding:3px;border-radius:3px;cursor:pointer;">Set Nighttime</button>
   </div>
   <div id="chatPanel">
     <div id="chatLog"></div>
@@ -4332,7 +4332,7 @@ function updatePlayerListUI() {
   let html = `<div style="color:#d4af37;margin-bottom:4px;">Players (${mp.players.size + 1})</div>`;
   html += `<div style="color:#8fbf8f;">★ ${mp.myName} (you)</div>`;
   for (const [id, p] of mp.players) {
-    html += `<div style="color:#f0e6d2;cursor:pointer;" onclick="teleportToPlayer('${id}')">• ${p.name}</div>`;
+    html += `<div style="color:#f0e6d2;cursor:pointer;" data-mp-id="${id}">• ${p.name}</div>`;
   }
   el.innerHTML = html;
 }
@@ -4398,6 +4398,38 @@ function initMultiplayer() {
   // Hide admin toggle by default (only show after password)
   const toggle = document.getElementById('adminToggle');
   if (toggle) toggle.style.display = 'none';
+
+  // Wire admin command buttons (can't use inline onclick in module scope)
+  const adminButtons = [
+    ['btnMpTeleportAll', 'teleportAll'],
+    ['btnMpAnchorAll', 'anchorAll'],
+    ['btnMpRaiseAll', 'raiseAll'],
+    ['btnMpHealAll', 'healAll'],
+    ['btnMpStorm', 'storm'],
+    ['btnMpCalm', 'calm'],
+    ['btnMpDay', 'day'],
+    ['btnMpNight', 'night'],
+  ];
+  for (const [btnId, cmd] of adminButtons) {
+    const btn = document.getElementById(btnId);
+    if (btn) {
+      btn.addEventListener('click', () => {
+        console.log('Admin button clicked:', cmd);
+        sendAdminCommand(cmd);
+      });
+    }
+  }
+
+  // Wire player list click for teleport (event delegation)
+  const mpPlayers = document.getElementById('mpPlayers');
+  if (mpPlayers) {
+    mpPlayers.addEventListener('click', (e) => {
+      const target = e.target;
+      if (target && target.dataset.mpId) {
+        teleportToPlayer(target.dataset.mpId);
+      }
+    });
+  }
 }
 
 // === Main multiplayer update loop ===
