@@ -2357,6 +2357,8 @@ function initAdminPanel() {
       state.admin[ctrl.state] = v;
       valDisplay.textContent = v.toFixed(2);
       if (ctrl.state === 'camDist') state.cam.tDistance = v;
+      // Sync to other players (if admin + connected)
+      sendAdminSync();
     });
   }
 
@@ -2367,6 +2369,7 @@ function initAdminPanel() {
     picker.value = state.admin[ctrl.state];
     picker.addEventListener('input', () => {
       state.admin[ctrl.state] = picker.value;
+      sendAdminSync();
     });
   }
 
@@ -2397,6 +2400,7 @@ function initAdminPanel() {
       if (picker) picker.value = state.admin[ctrl.state];
     }
     showToast('Admin values reset to defaults');
+      sendAdminSync();
   });
   document.getElementById('btnSaveConfig')?.addEventListener('click', saveAdminConfig);
   document.getElementById('btnLoadConfig')?.addEventListener('click', () => {
@@ -3970,8 +3974,26 @@ function handleMessage(msg) {
       }
       break;
 
-    case 'adminCommand':
+          case 'adminCommand':
       handleAdminCommand(msg.command, msg.targetId, msg.data);
+      break;
+
+    case 'adminSync':
+      // Received admin values from another player — apply to our state
+      if (msg.id !== mp.myId && msg.admin) {
+        Object.assign(state.admin, msg.admin);
+        // Update all slider UIs to match
+        for (const ctrl of ADMIN_CONTROLS) {
+          const slider = document.getElementById('ctrl' + ctrl.id);
+          const valDisplay = document.getElementById('admin' + ctrl.id);
+          if (slider) slider.value = state.admin[ctrl.state];
+          if (valDisplay) valDisplay.textContent = state.admin[ctrl.state].toFixed(2);
+        }
+        for (const ctrl of ADMIN_COLOR_CONTROLS) {
+          const picker = document.getElementById('ctrl' + ctrl.id);
+          if (picker) picker.value = state.admin[ctrl.state];
+        }
+      }
       break;
 
     case 'chat':
@@ -4225,6 +4247,18 @@ function checkAdminPassword(password) {
     return true;
   }
   return false;
+}
+
+// === Send admin values to all players (sync sliders) ===
+let adminSyncTimer = null;
+function sendAdminSync() {
+  if (!mp.isAdmin || !mp.connected || !mp.ws || mp.ws.readyState !== 1) return;
+  // Debounce: send at most once per 200ms
+  if (adminSyncTimer) return;
+  adminSyncTimer = setTimeout(() => {
+    adminSyncTimer = null;
+    mp.ws.send(JSON.stringify({ type: 'adminSync', admin: { ...state.admin } }));
+  }, 200);
 }
 
 function sendAdminCommand(command, targetId, data) {
