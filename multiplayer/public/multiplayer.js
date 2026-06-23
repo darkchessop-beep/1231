@@ -19,7 +19,13 @@ const mp = {
 
 // === Connect to server ===
 function connectToServer(url) {
-  mp.serverUrl = url || `ws://${window.location.host}`;
+  // Auto-detect ws:// vs wss:// based on page protocol
+  // HTTPS pages require wss:// (secure WebSocket), HTTP pages use ws://
+  if (!url) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    url = `${protocol}//${window.location.host}`;
+  }
+  mp.serverUrl = url;
   console.log('Connecting to', mp.serverUrl);
 
   try {
@@ -345,7 +351,9 @@ function updatePlayerListUI() {
 // === Initialize multiplayer (called after game loads) ===
 function initMultiplayer() {
   // Auto-connect to the server that served this page
-  const wsUrl = `ws://${window.location.host}`;
+  // Auto-detect ws:// vs wss:// based on page protocol
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}`;
   connectToServer(wsUrl);
 
   // Set up name input
