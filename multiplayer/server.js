@@ -139,10 +139,44 @@ wss.on('connection', (ws) => {
 
       case 'enemyUpdate': {
         // Only the first connected player is the "host" for enemies
-        // Host sends enemy updates, others receive
         const hostId = 'p1';
         if (id === hostId) {
           broadcast({ type: 'enemyUpdate', id, enemy: msg.enemy }, id);
+        }
+        break;
+      }
+
+      case 'nameChange': {
+        // Player changed their name — update server + broadcast to all
+        const player = players.get(id);
+        if (player) {
+          player.name = msg.name || 'Pirate';
+          broadcast({ type: 'nameChange', id, name: player.name });
+        }
+        break;
+      }
+
+      case 'adminCommand': {
+        // Admin commands — relayed to all players (or specific target)
+        // Types: teleportAll, teleportPlayer, anchorAll, anchorDrop, storm, healAll, spawnEnemy
+        if (msg.targetId) {
+          // Send to specific player
+          const target = players.get(msg.targetId);
+          if (target && target.ws.readyState === 1) {
+            target.ws.send(JSON.stringify({ type: 'adminCommand', id, command: msg.command, targetId: msg.targetId, data: msg.data }));
+          }
+        }
+        // Broadcast to all (everyone executes the command)
+        broadcast({ type: 'adminCommand', id, command: msg.command, targetId: msg.targetId, data: msg.data });
+        break;
+      }
+
+      case 'playerState': {
+        // Sync player character position/mode (for walking on deck, swimming, etc.)
+        const player = players.get(id);
+        if (player) {
+          player.playerState = msg.playerState;
+          broadcast({ type: 'playerState', id, playerState: msg.playerState }, id);
         }
         break;
       }
