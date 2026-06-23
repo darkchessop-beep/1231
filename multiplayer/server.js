@@ -171,6 +171,13 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'adminSync': {
+        // Admin slider values — broadcast to ALL players so everyone sees the same world
+        // Only admin players can send this
+        broadcast({ type: 'adminSync', id, admin: msg.admin });
+        break;
+      }
+
       case 'playerState': {
         // Sync player character position/mode (for walking on deck, swimming, etc.)
         const player = players.get(id);
